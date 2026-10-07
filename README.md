@@ -73,6 +73,16 @@ Each device has its own file in
 3. Turn off SpaceCalibrator, OpenVR-SpaceSync or anything else that moves
    lighthouse devices. Two tools correcting the same devices fight each other.
 
+### Linux
+
+Pick by what runs your VR:
+
+- **WiVRn or Monado:** run `QuestLHSync-wivrn.AppImage` from the
+  [Releases](https://github.com/CreoleVR/QuestLHSync/releases). That is all you need on the PC: no installer, no
+  SteamVR driver. See [WiVRn / Monado](#wivrn--monado-linux) below.
+- **SteamVR:** run `QuestLHSync-steamvr-installer.AppImage`. It is strictly for SteamVR users: it installs the
+  SteamVR driver and registers it with SteamVR, which WiVRn and Monado don't use.
+
 ## Use
 
 Start SteamVR as usual. QuestLHSync finds the headset by itself. Its page is in
@@ -134,6 +144,23 @@ network you trust. It only reads the cameras while a PC is connected, and
 patches nothing on disk. On the Frame, `lhsyncd` logs to the user journal
 (`journalctl --user -u questlhsync`).
 
+## WiVRn / Monado (Linux)
+
+WiVRn and Monado have no SteamVR host to hook, so `questlhsync-xr` is a desktop app that does the same job from
+outside: it shows the same dashboard page in a window, uses the same headset link and solver, reads the headset's and
+the lighthouse devices' poses over OpenXR (`XR_MNDX_xdev_space`, a headless session, as `motoc` does) and the base
+stations from SteamVR's `lighthousedb.json`, and applies the result as the lighthouse devices' tracking origin offset
+through libmonado. It needs WiVRn or Monado 25.0 or newer with SteamVR tracked devices enabled (not the WiVRn
+Flatpak, which can't use the lighthouse driver), SteamVR installed (it need not run), and the OpenXR loader. Both the
+loader and libmonado are found at run time: libmonado from the active runtime manifest's `MND_libmonado_path`.
+
+`./build.sh --wivrn` builds `out/questlhsync-xr` and packs it, SDL2 and a font into
+`out/QuestLHSync-wivrn.AppImage`. Start lighthouse devices before the headset connects (WiVRn discovers them
+once), start the app, then connect the headset: the app waits for it. The page's buttons pause the corrections and
+record a session. `--host IP` and `--headset SERIAL` as in the driver's settings; `--no-window` runs without the
+window; `--dump` lists the devices, their tracking origins and poses without solving. State and the log are in
+`~/.local/share/QuestLHSync` (`questlhsync-xr.log`). No base station averaging or gravity levelling yet.
+
 ## Uninstall
 
 - **Quest:** remove the module in the Magisk app and reboot.
@@ -158,18 +185,46 @@ python install.py                register driver\questlhsync with SteamVR
 python install.py headset        install the module over adb, no reboot
 ```
 
-Zig cross-compiles the Steam Frame package (`zig` on PATH, or `ZIG` set to it).
-On the Frame itself or any arm64 Linux, `frame/build.py` uses `cc` and `c++`
-instead.
+On Linux (x86-64) everything builds through `./build.sh`, which runs the scripts in `scripts/`:
 
-The Steam Frame's installer app is a Flatpak, built on Linux for the machine's
-own architecture (so on the Frame, or any arm64 Linux) with
-`python3 frame/installer/build.py`, into
-`out/QuestLHSync-frame-installer-<version>.flatpak`. It needs flatpak-builder
-and the GNOME SDK:
-`flatpak install --user flathub org.flatpak.Builder org.gnome.Sdk//50`.
-`release.py` adds it to the release files as `QuestLHSync-frame-installer.flatpak`
-when it's in `out/`.
+```
+./build.sh                  the SteamVR driver and its dashboard app (same as --driver)
+./build.sh --installer      out/QuestLHSync-steamvr-installer.AppImage (builds the driver first)
+./build.sh --wivrn          out/questlhsync-xr and out/QuestLHSync-wivrn.AppImage
+./build.sh --all            the three above, with the driver built once (flags combine: ./build.sh --installer --wivrn)
+./build.sh --frame          the Steam Frame's driver and installer (run it on the Steam Frame, see below)
+```
+
+For SteamVR (in Valve's sniper container), `./build.sh` builds the driver
+(`driver/questlhsync/bin/linux64/driver_questlhsync.so`) and the dashboard app (`QuestLHSync`, with
+`libopenvr_api.so`, next to it) in Valve's sniper SDK image with docker or podman (`QLHS_HOST_BUILD=1` uses the
+host compiler instead). With SteamVR closed, `python3 install.py` registers `driver/questlhsync` with SteamVR, and
+`"activateMultipleDrivers": true` must be set under `"steamvr"` in `steamvr.vrsettings`. The data folder is
+`~/.local/share/QuestLHSync`. The driver starts the dashboard app, which draws the page in software (it needs a
+Liberation, DejaVu or Noto Sans font on the system); it also shows the page in a desktop window (SDL2). There is no installer on Linux.
+`QuestLHSync --preview out.png [locked|acquiring|...]` renders a sample page. Gravity levelling reads the
+lighthouse receivers' hidraw nodes, which needs Valve's udev rules (Steam installs them).
+
+`./build.sh --installer` builds `out/QuestLHSync-steamvr-installer.AppImage` (builds the driver first). It
+runs on any x86-64 distro with glibc 2.31+, FUSE (or `--appimage-extract-and-run`), libcurl and a display, and
+installs to `~/.local/share/QuestLHSync/questlhsync`. Like the Windows installer it downloads the latest release's
+`QuestLHSync-linux-module-<version>.zip` (`release.py` builds it from `./build.sh`'s output) and offers an update
+when a newer release is out. It also carries the driver, the dashboard app, SDL2 and a font, and installs those when
+GitHub isn't reachable, the latest release has no Linux package yet, or the AppImage is the newer. Installing stops
+SteamVR, replaces the driver folder, registers it with `vrpathreg`, sets `activateMultipleDrivers`, and unregisters
+other QuestLHSync copies (a source checkout). Without a display, `--install`, `--uninstall` and `--status` do the
+same from a terminal. Plug in Watchman dongles before starting SteamVR: the container SteamVR runs in doesn't see
+ones plugged in later.
+
+`./build.sh --frame` builds the Steam Frame's package (`out/QuestLHSync-frame-<version>.tar.gz`: `lhsyncd` and the
+`questlhsync_frame` SteamVR driver, by `frame/build.py`) and its installer app
+(`out/QuestLHSync-frame-installer-<version>.flatpak`, by `frame/installer/build.py`). **Run it on the Steam Frame
+itself, or another arm64 Linux:** both build for the machine they run on, so `--frame` refuses to run anywhere else
+(it isn't part of `--all`). The Frame's own `cc` and `c++` are used; the Flatpak needs flatpak-builder and the GNOME
+SDK: `flatpak install --user flathub org.flatpak.Builder org.gnome.Sdk//50`. From another machine, Zig can
+cross-compile the package alone (`python3 frame/build.py`, with `zig` on PATH or `ZIG` set to it); the Flatpak can't
+be built that way. `release.py` adds the Flatpak to the release files as `QuestLHSync-frame-installer.flatpak` when
+it's in `out/`.
 
 `lhsyncd`'s core (`src/headset/lhsyncd.c`) is shared by both headsets; each adds
 its own side behind `src/headset/headset.h` (`magisk/src/quest.c`,

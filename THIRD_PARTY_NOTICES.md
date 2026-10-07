@@ -11,6 +11,24 @@ the complete text is in `third_party/openvr/LICENSE`.
 
 Source: https://github.com/ValveSoftware/openvr
 
+`libopenvr_api.so` (`third_party/openvr/bin/linux64`) is the one SteamVR ships for Linux, unmodified.
+
+## stb_truetype
+
+`third_party/stb/stb_truetype.h` (v1.26, Sean Barrett and contributors) rasterises the dashboard app's text on Linux.
+Public domain (or MIT, at your choice); the terms are at the end of the file.
+
+Source: https://github.com/nothings/stb
+
+## OpenXR headers and libmonado
+
+`third_party/openxr/openxr` holds the Khronos OpenXR 1.1 headers (Copyright The Khronos Group Inc., Apache-2.0 OR MIT)
+and Monado's `XR_MNDX_xdev_space.h` (Copyright Collabora, Ltd., BSL-1.0); `third_party/monado/monado.h` is Monado's
+libmonado header v1.5.1 (BSL-1.0). `questlhsync-xr` only uses them to talk to the system's OpenXR loader and
+libmonado, which it opens at run time.
+
+Source: https://github.com/KhronosGroup/OpenXR-SDK, https://gitlab.freedesktop.org/monado/monado
+
 ## MinHook
 
 MinHook under `third_party/minhook` is Copyright (C) 2009-2017 Tsuda Kageyu,
