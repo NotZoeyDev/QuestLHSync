@@ -12,7 +12,7 @@ driver on a Steam Frame), and a **SteamVR driver** for the PC, which solves the
 alignment, applies it to every lighthouse device and adds a page to the SteamVR
 dashboard.
 
-Steam Frame support is by [@NotZoeyDev](https://github.com/NotZoeyDev).
+Steam Frame and Linux support is by [@NotZoeyDev](https://github.com/NotZoeyDev).
 
 ![The QuestLHSync dashboard page](docs/dashboard.png)
 
@@ -153,8 +153,8 @@ outside: it shows the same dashboard page in a window, uses the same headset lin
 the lighthouse devices' poses over OpenXR (`XR_MNDX_xdev_space`, a headless session, as `motoc` does) and the base
 stations from SteamVR's `lighthousedb.json`, and applies the result as the lighthouse devices' tracking origin offset
 through libmonado. It needs WiVRn or Monado 25.0 or newer with SteamVR tracked devices enabled (not the WiVRn
-Flatpak, which can't use the lighthouse driver), SteamVR installed (it need not run), and the OpenXR loader. Both the
-loader and libmonado are found at run time: libmonado from the active runtime manifest's `MND_libmonado_path`.
+Flatpak, which can't use the lighthouse driver), SteamVR installed (not required to be running), and the OpenXR loader.
+Both the loader and libmonado are found at runtime: libmonado from the active runtime manifest's `MND_libmonado_path`.
 
 `./build.sh --wivrn` builds `out/questlhsync-xr` and packs it, SDL2 and a font into
 `out/QuestLHSync-wivrn.AppImage`. Start lighthouse devices before the headset connects (WiVRn discovers them
@@ -203,20 +203,17 @@ For SteamVR (in Valve's sniper container), `./build.sh` builds the driver
 host compiler instead). With SteamVR closed, `python3 install.py` registers `driver/questlhsync` with SteamVR, and
 `"activateMultipleDrivers": true` must be set under `"steamvr"` in `steamvr.vrsettings`. The data folder is
 `~/.local/share/QuestLHSync`. The driver starts the dashboard app, which draws the page in software (it needs a
-Liberation, DejaVu or Noto Sans font on the system); it also shows the page in a desktop window (SDL2). There is no installer on Linux.
-`QuestLHSync --preview out.png [locked|acquiring|...]` renders a sample page. Gravity levelling reads the
-lighthouse receivers' hidraw nodes, which needs Valve's udev rules (Steam installs them).
+Liberation, DejaVu or Noto Sans font on the system); it also shows the page in a desktop window (SDL2). 
+Gravity levelling reads the lighthouse receivers' hidraw nodes, which needs Valve's udev rules (Steam installs them).
 
 `./build.sh --installer` builds `out/QuestLHSync-steamvr-installer.AppImage` (builds the driver first). It
 runs on any x86-64 distro with glibc 2.31+, FUSE (or `--appimage-extract-and-run`), libcurl and a display, and
 installs to `~/.local/share/QuestLHSync/questlhsync`. Like the Windows installer it downloads the latest release's
 `QuestLHSync-linux-module-<version>.zip` (`release.py` builds it from `./build.sh`'s output) and offers an update
 when a newer release is out. It also carries the driver, the dashboard app, SDL2 and a font, and installs those when
-GitHub isn't reachable, the latest release has no Linux package yet, or the AppImage is the newer. Installing stops
-SteamVR, replaces the driver folder, registers it with `vrpathreg`, sets `activateMultipleDrivers`, and unregisters
-other QuestLHSync copies (a source checkout). Without a display, `--install`, `--uninstall` and `--status` do the
-same from a terminal. Plug in Watchman dongles before starting SteamVR: the container SteamVR runs in doesn't see
-ones plugged in later.
+GitHub isn't reachable. Installing stops SteamVR, replaces the driver folder, registers it with `vrpathreg`,
+sets `activateMultipleDrivers`, and unregisters other QuestLHSync copies (a source checkout).
+Without a display, `--install`, `--uninstall` and `--status` do the same from a terminal.
 
 `./build.sh --frame` builds the Steam Frame's package (`out/QuestLHSync-frame-<version>.tar.gz`: `lhsyncd` and the
 `questlhsync_frame` SteamVR driver, by `frame/build.py`) and its installer app
