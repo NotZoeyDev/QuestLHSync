@@ -25,6 +25,8 @@ Steam Frame support is by [@NotZoeyDev](https://github.com/NotZoeyDev).
 - **SteamVR base stations**, 1.0 or 2.0.
 - **Windows with SteamVR**, with the headset streamed by anything: Steam Link,
   Link, Air Link, Virtual Desktop, ALVR, CreoleCast...
+- Or **Linux with SteamVR or WiVRn**, with the headset streamed by anything that
+  works on Linux (Steam Link, WiVRn...).
 - The PC and the headset on the **same local network**.
 - At least **one lighthouse device switched on** (a tracker or an Index
   controller). SteamVR only shows base stations while one is on.
