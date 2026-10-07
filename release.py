@@ -3,6 +3,10 @@ built, one per device:
 
   QuestLHSync-steamvr-installer.exe        installs and updates the SteamVR driver (downloads the zip below)
   QuestLHSync-steamvr-<version>.zip        the SteamVR driver folder questlhsync/ (driver, dashboard app, openvr_api.dll)
+  QuestLHSync-linux-module-<version>.zip   the same folder for Linux (driver, dashboard app, libopenvr_api.so), what the
+                                           Linux installer downloads; when ./build.sh has built it
+  QuestLHSync-steamvr-installer.AppImage  the Linux SteamVR installer (driver included), when out/ has one
+  QuestLHSync-wivrn.AppImage        the desktop app for WiVRn/Monado, when out/ has one
   QuestLHSync-quest-module-<version>.zip   the Quest's Magisk module
   QuestLHSync-frame-module-<version>.tar.gz  the Steam Frame's package
   QuestLHSync-frame-installer.flatpak      the Steam Frame's installer app, when out/ has one (built on arm64 Linux)
@@ -48,6 +52,21 @@ def steamvr_zip(out):
             z.write(os.path.join(HERE, f), f)
 
 
+def linux_zip(out):
+    lib = os.path.join(DRIVER, "bin", "linux64")
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for rel in ("driver.vrdrivermanifest", "resources/settings/default.vrsettings"):
+            z.write(os.path.join(DRIVER, rel), "questlhsync/" + rel)
+        for f in ("driver_questlhsync.so", "QuestLHSync", "libopenvr_api.so"):
+            info = zipfile.ZipInfo("questlhsync/bin/linux64/" + f, time.localtime(os.path.getmtime(os.path.join(lib, f)))[:6])
+            info.external_attr = 0o755 << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            with open(os.path.join(lib, f), "rb") as fh:
+                z.writestr(info, fh.read())
+        for f in NOTICES:
+            z.write(os.path.join(HERE, f), f)
+
+
 def module_zip(out):
     with zipfile.ZipFile(MODULE) as src, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for info in src.infolist():  # as built: Magisk reads its META-INF and module.prop from it
@@ -86,11 +105,18 @@ def main():
     os.makedirs(dest)
     shutil.copy2(INSTALLER, os.path.join(dest, "QuestLHSync-steamvr-installer.exe"))
     steamvr_zip(os.path.join(dest, f"QuestLHSync-steamvr-{ver}.zip"))
+    linux_lib = os.path.join(DRIVER, "bin", "linux64", "driver_questlhsync.so")
+    if os.path.exists(linux_lib):
+        linux_zip(os.path.join(dest, f"QuestLHSync-linux-module-{ver}.zip"))
     module_zip(os.path.join(dest, f"QuestLHSync-quest-module-{ver}.zip"))
     frame_tar(os.path.join(dest, f"QuestLHSync-frame-module-{ver}.tar.gz"))
     flatpaks = sorted(glob.glob(os.path.join(HERE, "out", "QuestLHSync-frame-installer*.flatpak")), key=os.path.getmtime)
     if flatpaks:
         shutil.copy2(flatpaks[-1], os.path.join(dest, "QuestLHSync-frame-installer.flatpak"))
+    for name in ("QuestLHSync-steamvr-installer.AppImage", "QuestLHSync-wivrn.AppImage"):
+        appimage = os.path.join(HERE, "out", name)
+        if os.path.exists(appimage):
+            shutil.copy2(appimage, dest)
     for f in sorted(os.listdir(dest)):
         print(f"  {f}  ({os.path.getsize(os.path.join(dest, f)) / 1e6:.1f} MB)")
     if not flatpaks:
