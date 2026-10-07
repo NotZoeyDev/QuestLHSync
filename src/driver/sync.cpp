@@ -2197,7 +2197,7 @@ void Sync::Retime(double old_e, double new_e) {
 static std::string Join(const std::string &dir, const char *name) {
   if (dir.empty()) return name;
   char e = dir.back();
-  return dir + ((e == '\\' || e == '/') ? "" : "\\") + name;
+  return dir + ((e == '\\' || e == '/') ? "" : "/") + name;
 }
 
 static StationsFile LoadStations(const std::string &dir) {

@@ -7,9 +7,16 @@
 // through it): lighthouse devices get the transform prepended to their WorldFromDriver, and the HMD's own poses
 // (any streamer's) feed the solver with their exact times. Status and commands for the dashboard overlay
 // (QuestLHSync.exe, launched from here) go through the shared memory in qlhs_status.h.
+#ifdef _WIN32
 #include <winsock2.h>
 #include <windows.h>
 #include <shlobj.h>
+#else
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <spawn.h>
+#include <sys/mman.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -27,11 +34,13 @@
 #include <vector>
 
 #include "../common/qlhs_status.h"
-#include "MinHook.h"
+#include "../common/datadir_linux.h"
+#include "hook.h"
 #include "gravity.h"
 #include "net.h"
 #include "openvr_driver.h"
 #include "relations.h"
+#include "platform.h"
 #include "sync.h"
 
 static const char *kSection = "driver_questlhsync";
@@ -70,14 +79,19 @@ static std::string Fmt(const char *fmt, ...) {
   return buf;
 }
 
+// %LOCALAPPDATA%\QuestLHSync, or ~/.local/share/QuestLHSync
 static std::string DataDir() {
-  PWSTR p = nullptr;
+#ifdef _WIN32
   std::filesystem::path d;
+  PWSTR p = nullptr;
   if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &p))) d = std::filesystem::path(p) / "QuestLHSync";
   CoTaskMemFree(p);
   std::error_code ec;
   std::filesystem::create_directories(d, ec);
   return d.string();
+#else
+  return QlhsDataDir();
+#endif
 }
 
 // ---------------------------------------------------------------- the transform the hook applies
@@ -273,19 +287,34 @@ class Provider : public vr::IServerTrackedDeviceProvider {
     dir_ = DataDir();
     {
       std::lock_guard<std::mutex> g(g_log_m);
-      std::string lp = dir_ + "\\questlhsync.log";
+      std::string lp = dir_ + "/questlhsync.log";
       std::error_code ec;
       if (std::filesystem::file_size(lp, ec) > (2 << 20)) std::filesystem::rename(lp, lp + ".old", ec);
       g_logf = fopen(lp.c_str(), "a");
     }
+#ifdef _WIN32
     map_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(QlhsStatus), QLHS_SHM_NAME);
     if (map_) g_st = (QlhsStatus *)MapViewOfFile(map_, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(QlhsStatus));
+#else
+    // the dashboard app maps the same file
+    int sfd = open((dir_ + "/" QLHS_SHM_FILE).c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (sfd >= 0 && ftruncate(sfd, sizeof(QlhsStatus)) == 0) {
+      void *m = mmap(nullptr, sizeof(QlhsStatus), PROT_READ | PROT_WRITE, MAP_SHARED, sfd, 0);
+      if (m != MAP_FAILED) g_st = (QlhsStatus *)m;
+    }
+    if (sfd >= 0) close(sfd);
+    if (!g_st) g_st = new QlhsStatus();
+#endif
     if (g_st) {
       memset((void *)g_st, 0, sizeof(QlhsStatus));
       g_st->version = QLHS_VERSION;
       g_st->magic = QLHS_MAGIC;
     }
+#ifdef _WIN32
     Log("QuestLHSync " QLHS_RELEASE " driver starting, data in %LOCALAPPDATA%\\QuestLHSync");
+#else
+    Log("QuestLHSync " QLHS_RELEASE " driver starting, data in " + dir_);
+#endif
     SyncConfig cfg;
     cfg.dir = dir_;
     g_sync = std::make_unique<Sync>(cfg, [](const std::string &s) { Log(s); });
@@ -295,7 +324,7 @@ class Provider : public vr::IServerTrackedDeviceProvider {
     link_ = std::make_unique<HeadsetLink>(
         g_sync.get(), [](const std::string &s) { Log(s); },
         [](double t, const std::string &s) { if (g_sync) g_sync->Rec(t, "%s", s.c_str()); });
-    link_->SetMemory(dir_ + "\\headset.txt");
+    link_->SetMemory(dir_ + "/headset.txt");
     ReadSettings();
     if (MH_Initialize() != MH_OK) { Log("MH_Initialize failed"); return vr::VRInitError_None; }
     HookHost("IVRServerDriverHost_006", 0, (void *)&Detour<0>);
@@ -412,7 +441,9 @@ class Provider : public vr::IServerTrackedDeviceProvider {
   void LeaveStandby() override {}
 
  private:
+#ifdef _WIN32
   HANDLE map_ = nullptr;
+#endif
   unsigned tick_ = 0;
   std::string dir_;
   std::unique_ptr<HeadsetLink> link_;
@@ -483,9 +514,10 @@ class Provider : public vr::IServerTrackedDeviceProvider {
     g_sync->SetRecord(f);
     rec_spots_ = g_sync->spots();
     g_sync->Rec(QpcNow(), "I QuestLHSync recording (qlhs_replay reads it)");
-    Log(std::string("recording to recordings\\") + b);
+    Log(std::string("recording to recordings/") + b);
   }
 
+#ifdef _WIN32
   void LaunchOverlay() {
     HANDLE m = OpenMutexW(SYNCHRONIZE, FALSE, QLHS_OVERLAY_MUTEX);
     if (m) { CloseHandle(m); return; }
@@ -511,6 +543,28 @@ class Provider : public vr::IServerTrackedDeviceProvider {
   }
 
   static void HmdDriverFactoryAnchor() {}
+#else
+  // the dashboard app next to the driver's library; it quits when this process (vrserver) does
+  void LaunchOverlay() {
+    Dl_info di;
+    if (!dladdr((void *)&HmdDriverFactoryAnchor, &di) || !di.dli_fname) return;
+    std::filesystem::path exe = std::filesystem::path(di.dli_fname).parent_path() / "QuestLHSync";
+    std::error_code ec;
+    if (!std::filesystem::exists(exe, ec)) { Log("dashboard app missing: no QuestLHSync next to the driver"); return; }
+    std::string path = exe.string(), pid = std::to_string(getpid());
+    char *argv[] = {path.data(), (char *)"--server", pid.data(), nullptr};
+    posix_spawnattr_t at;
+    posix_spawnattr_init(&at);
+    posix_spawnattr_setflags(&at, POSIX_SPAWN_SETSID);
+    pid_t child;
+    int rc = posix_spawn(&child, path.c_str(), nullptr, &at, argv, environ);
+    posix_spawnattr_destroy(&at);
+    if (rc == 0) Log("dashboard app started");
+    else Log(Fmt("dashboard app didn't start (error %d)", rc));
+  }
+
+  static void HmdDriverFactoryAnchor() {}
+#endif
 
   void Stations() {
     std::map<std::string, std::pair<V3, M3>> raw;
@@ -646,7 +700,7 @@ class Provider : public vr::IServerTrackedDeviceProvider {
 
 static Provider g_provider;
 
-extern "C" __declspec(dllexport) void *HmdDriverFactory(const char *name, int *ret) {
+QLHS_EXPORT void *HmdDriverFactory(const char *name, int *ret) {
   if (strcmp(name, vr::IServerTrackedDeviceProvider_Version) == 0) return &g_provider;
   if (ret) *ret = vr::VRInitError_Init_InterfaceNotFound;
   return nullptr;

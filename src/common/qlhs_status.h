@@ -7,6 +7,10 @@
 #define QLHS_SHM_NAME L"Local\\QuestLHSync"
 #define QLHS_OVERLAY_MUTEX L"Local\\QuestLHSyncOverlay"
 #define QLHS_MAGIC 0x53484C51u  // "QLHS"
+// Linux: no named mappings; the status is a file in the data folder, mapped shared by both, and the dashboard app
+// holds a lock on another while it runs
+#define QLHS_SHM_FILE "status.shm"
+#define QLHS_OVERLAY_LOCK "overlay.lock"
 #define QLHS_VERSION 2
 #define QLHS_RELEASE "1.16"  // magisk/build_module.py reads it
 

@@ -1,4 +1,10 @@
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <dlfcn.h>
+#include <elf.h>
+#include <link.h>
+#endif
 
 #include "relations.h"
 
@@ -9,7 +15,8 @@
 #include <fstream>
 #include <sstream>
 
-#include "MinHook.h"
+#include "hook.h"
+#include "platform.h"
 #include "json.h"
 
 namespace {
@@ -22,16 +29,21 @@ constexpr size_t kKeepRel = 30;                     // the newest relationships 
 constexpr int kSayPerMin = 10;                      // log lines a minute at most
 constexpr uint64_t kSaveMs = 10000;                 // relations.json written at most this often
 
-// the relationship step's log line, and its arguments as it takes them: mov r13, r9 (the pose); mov r15d, r8d and
-// mov r12d, edx (the two stations' serials)
+// the relationship step's log line, and how it begins in SteamVR's lighthouse driver (the Linux build's line goes on,
+// ", which is closer to the origin")
 const char kMoving[] = "Moving base %08X %.0fmm and %.1f deg because of relationship with %08X";
+#ifdef _WIN32
+// its arguments as it takes them: mov r13, r9 (the pose); mov r15d, r8d and mov r12d, edx (the two stations' serials)
 const uint8_t kArgs[] = {0x4D, 0x8B, 0xE9, 0x45, 0x8B, 0xF8, 0x44, 0x8B, 0xE2};
+#endif
 
+Relations *g_self;
+
+#ifdef _WIN32
 // (this, a, b, rel, variance) as it takes them, with room for arguments a later version might add: each one, and what
 // it returns, passed on bit for bit
 using RelFn = uint64_t (*)(void *, uint64_t, uint64_t, const float *, uint64_t, uint64_t, uint64_t, uint64_t);
 RelFn g_orig;
-Relations *g_self;
 
 uint64_t Detour(void *self, uint64_t a, uint64_t b, const float *rel, uint64_t s5, uint64_t s6, uint64_t s7,
                 uint64_t s8) {
@@ -43,6 +55,22 @@ uint64_t Detour(void *self, uint64_t a, uint64_t b, const float *rel, uint64_t s
   }
   return g_orig(self, a, b, use ? avg : rel, s5, s6, s7, s8);
 }
+#else
+// System V: (this, a, b) in registers, the variance in xmm0, and the relationship, seven floats, by value on the
+// stack (the function reads it at rbp+0x10). A struct of those seven floats takes the same place
+struct Rel7 { float f[7]; };
+using RelFn = void (*)(void *, uint32_t, uint32_t, Rel7, float);
+RelFn g_orig;
+
+void Detour(void *self, uint32_t a, uint32_t b, Rel7 rel, float variance) {
+  Rel7 avg;
+  try {
+    if (g_self && g_self->Average(a, b, rel.f, avg.f)) rel = avg;
+  } catch (...) {
+  }
+  g_orig(self, a, b, rel, variance);
+}
+#endif
 
 std::string Fmt(const char *fmt, ...) {
   char buf[512];
@@ -90,6 +118,7 @@ Relations::Pose Relations::Mean(const std::vector<Pose> &v) {
   return {{s.w / n, s.x / n, s.y / n, s.z / n}, t * (1.0 / v.size())};
 }
 
+#ifdef _WIN32
 void *Relations::Find(void *module, std::string &why) {
   auto *base = (uint8_t *)module;
   auto *dos = (IMAGE_DOS_HEADER *)base;
@@ -141,10 +170,82 @@ void *Relations::Find(void *module, std::string &why) {
   why = "its relationship step takes other arguments";
   return nullptr;
 }
+#else
+// module: the shared object's load address (its ELF header)
+void *Relations::Find(void *module, std::string &why) {
+  auto *base = (uint8_t *)module;
+  auto *eh = (const Elf64_Ehdr *)base;
+  auto *ph = (const Elf64_Phdr *)(base + eh->e_phoff);
+  // the log line in read-only data, then the code that loads it
+  const uint8_t *str = nullptr;
+  for (int i = 0; i < eh->e_phnum && !str; i++) {
+    if (ph[i].p_type != PT_LOAD || (ph[i].p_flags & PF_X) || !(ph[i].p_flags & PF_R)) continue;
+    const uint8_t *p = base + ph[i].p_vaddr, *e = p + ph[i].p_filesz;
+    for (; p + sizeof kMoving <= e; p++)
+      if (*p == 'M' && !memcmp(p, kMoving, sizeof kMoving - 1)) { str = p; break; }
+  }
+  if (!str) { why = "no base station move in it"; return nullptr; }
+  const uint8_t *ref = nullptr;
+  for (int i = 0; i < eh->e_phnum && !ref; i++) {
+    if (ph[i].p_type != PT_LOAD || !(ph[i].p_flags & PF_X)) continue;
+    const uint8_t *p = base + ph[i].p_vaddr, *e = p + ph[i].p_filesz;
+    for (; p + 7 <= e; p++) {
+      if ((p[0] != 0x48 && p[0] != 0x4C) || p[1] != 0x8D || (p[2] & 0xC7) != 0x05) continue;  // lea r, [rip+d]
+      int32_t d;
+      memcpy(&d, p + 3, 4);
+      if (p + 7 + d == str) { ref = p; break; }
+    }
+  }
+  if (!ref) { why = "nothing loads its move line"; return nullptr; }
+  // the function around it, from .eh_frame_hdr's sorted table: version 1, pc-relative eh_frame pointer, 4-byte count,
+  // (start, FDE) pairs relative to the table's start, sorted by start
+  const uint8_t *hdr = nullptr;
+  for (int i = 0; i < eh->e_phnum; i++)
+    if (ph[i].p_type == PT_GNU_EH_FRAME) hdr = base + ph[i].p_vaddr;
+  if (!hdr || hdr[0] != 1 || hdr[1] != 0x1B || hdr[2] != 0x03 || hdr[3] != 0x3B) {
+    why = "no unwind table it can read";
+    return nullptr;
+  }
+  uint32_t count;
+  memcpy(&count, hdr + 8, 4);
+  struct Ent { int32_t start, fde; };
+  auto *tab = (const Ent *)(hdr + 12);
+  const Ent *best = nullptr;
+  for (uint32_t lo = 0, hi = count; lo < hi;) {
+    uint32_t mid = (lo + hi) / 2;
+    if (hdr + tab[mid].start <= ref) { best = &tab[mid]; lo = mid + 1; }
+    else hi = mid;
+  }
+  if (!best) { why = "no unwind entry for its move"; return nullptr; }
+  // the FDE: length, CIE pointer, then pc-relative start and a 4-byte range (a CIE with another encoding is refused)
+  const uint8_t *fde = hdr + best->fde;
+  int32_t range;
+  memcpy(&range, fde + 12, 4);
+  uint8_t *fn = (uint8_t *)hdr + best->start;
+  if (range <= 0 || ref >= fn + range) { why = "no unwind entry for its move"; return nullptr; }
+  // its arguments: the relationship is on the stack (movss xmm, [rbp+0x10]) and the function sets up a frame pointer
+  bool stack_rel = false;
+  for (int k = 0; k + 6 < 0x80 && k < range - 6; k++)
+    if (fn[k] == 0xF3 && fn[k + 1] == 0x0F && fn[k + 2] == 0x10 && (fn[k + 3] & 0xC7) == 0x45 && fn[k + 4] == 0x10) stack_rel = true;
+  if (!stack_rel) { why = "its relationship step takes other arguments"; return nullptr; }
+  return fn;
+}
+#endif
 
 bool Relations::Hook() {
   if (target_) return true;
+#ifdef _WIN32
   HMODULE mod = GetModuleHandleW(L"driver_lighthouse.dll");
+#else
+  void *mod = nullptr;  // driver_lighthouse.so's load address, once SteamVR has loaded it
+  dl_iterate_phdr(
+      [](dl_phdr_info *i, size_t, void *out) {
+        std::string n = i->dlpi_name ? i->dlpi_name : "";
+        if (n.size() >= 20 && n.compare(n.size() - 20, 20, "driver_lighthouse.so") == 0) *(void **)out = (void *)i->dlpi_addr;
+        return 0;
+      },
+      &mod);
+#endif
   if (!mod) return false;
   std::string why;
   void *fn = Find(mod, why);
@@ -261,7 +362,7 @@ void Relations::Flush(bool now) {
   }
   for (auto &l : said) log_(l);
   if (s.empty()) return;
-  std::string path = dir_ + "\\relations.json", tmp = path + ".tmp";
+  std::string path = dir_ + "/relations.json", tmp = path + ".tmp";
   FILE *f = fopen(tmp.c_str(), "wb");
   if (!f) return;
   fwrite(s.data(), 1, s.size(), f);
@@ -270,7 +371,7 @@ void Relations::Flush(bool now) {
 }
 
 void Relations::Load() {
-  std::ifstream f(dir_ + "\\relations.json", std::ios::binary);
+  std::ifstream f(dir_ + "/relations.json", std::ios::binary);
   if (!f) return;
   std::stringstream ss;
   ss << f.rdbuf();
