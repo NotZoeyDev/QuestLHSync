@@ -516,7 +516,7 @@ static void Engine(const Options &o) {
   time_t db_mtime = 0;
   Rig stage_off{}, lh_off{};   // reference space Stage's offset, the lighthouse tracking origin's
   std::set<uint32_t> lh_origins;
-  double next_connect = 0, last_tick = 0, last_db = 0, last_gen = 0, last_stage = 0, last_status = 0, last_dump = 0, last_pub = 0;
+  double next_connect = 0, last_tick = 0, last_db = 0, last_gen = 0, last_stage = 0, last_status = 0, last_dump = 0, last_pub = 0, last_ext = 0;
   bool said_wait = false, applied_any = false, recording = false, paused_ = false;
   Rig applied{};
   int cmd_seen = 0;
@@ -694,6 +694,17 @@ static void Engine(const Options &o) {
       last_stage = now;
       mnd_pose_t s;
       if (mnd.get_ref(mnd.root, MND_SPACE_REFERENCE_TYPE_STAGE, &s) == MND_SUCCESS) stage_off = FromMnd(s);
+      if (!lh_origins.empty() && mnd.get_origin(mnd.root, *lh_origins.begin(), &s) == MND_SUCCESS) {
+        Rig cur = FromMnd(s);  // the live offset: something else (motoc, a profile script) may have set it
+        double dp = norm(cur.p - lh_off.p), da = QuatDeg(cur.q, lh_off.q);
+        if (applied_any && (dp > 0.0005 || da > 0.05) && now - last_ext >= 5) {
+          last_ext = now;
+          Log(Fmt("the lighthouse tracking origin's offset was changed by something else (%.1f cm, %.2f deg): rewriting ours",
+                  dp * 100, da));
+        }
+        lh_off = cur;  // raw poses are divided by what is really applied; the next tick rewrites ours if it differs
+        if (applied_any && (dp > 0.0005 || da > 0.05)) applied = cur;
+      }
     }
     if (now - last_db >= 2) {
       last_db = now;
