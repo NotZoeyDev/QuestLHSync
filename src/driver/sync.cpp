@@ -219,26 +219,12 @@ bool Optics::LoadFrame(const JVal &root, std::string *err) {
     if (err) *err = "no usable camera in xrservice.json (KB4 intrinsics, extrinsics)";
     return false;
   }
-  // The lower pair looks down and forward, at the floor and the hands; the base stations hang above. In two Frame
-  // recordings only the two looking up ever matched a station, while the others sent most of the bright spots (lamps,
-  // glints). They're left out, whatever their index
-  int up = 0;
-  for (int i = 0; i < kMaxCam; i++) up += out[i].valid && out[i].R.m[1][2] > kUpward;
-  if (up)
-    for (int i = 0; i < kMaxCam; i++) out[i].use = out[i].valid && out[i].R.m[1][2] > kUpward;
   for (int i = 0; i < kMaxCam; i++) cams_[i] = out[i];
   const JVal *model = dc->get("model_number");
   device_ = model && model->t == JVal::Str ? model->s : "Steam Frame";
   headset_ = kFrame;
   exact_time_ = true;
   return true;
-}
-
-std::string Optics::Unused() const {
-  std::string s;
-  for (int i = 0; i < kMaxCam; i++)
-    if (cams_[i].valid && !cams_[i].use) s += (s.empty() ? "" : ", ") + std::to_string(i);
-  return s;
 }
 
 bool Optics::Ray(int cam, double x, double y, V3 &o, V3 &d) const {
@@ -2777,8 +2763,6 @@ bool Sync::SetCalibration(const std::string &json, std::string *err) {
   std::lock_guard<std::mutex> g(net_);
   if (!optics_.Load(json, err)) return false;
   have_optics_ = true;
-  std::string left_out = optics_.Unused();
-  if (!left_out.empty()) log_("cameras " + left_out + " left out: they look down, the base stations hang above");
   // a Quest's frame period is one of two, the other headsets' are learned from their frames
   grid_quest_ = optics_.headset() == Optics::kQuest && !cfg_.learn_grid;
   solver_.SetDimDots(optics_.headset() == Optics::kFrame);
@@ -3040,7 +3024,6 @@ void Sync::OnLine(double pc, const char *line) {
   int mean, off = 0;
   if (sscanf(line, "F %d %u %lld %d %d%n", &cam, &k, &tus, &mean, &nb, &off) < 5) return;
   std::lock_guard<std::mutex> g(net_);
-  if (have_optics_ && !optics_.Used(cam)) return;  // a camera that can't see the base stations: not worth a frame grid
   nframes_++;
   double hs = tus / 1e6;
   if (cfg_.arrival_clock) clock_.AddArrival(pc, hs);

@@ -83,8 +83,7 @@ Start SteamVR as usual. QuestLHSync finds the headset by itself. Its page is in
 the SteamVR dashboard, with a copy on the desktop.
 
 The first time, look around so the cameras catch both base stations (the
-Frame uses only its two upper cameras: the lower pair looks at the floor, not
-at the base stations). It locks within about half a minute,
+Frame's upper cameras see most of them). It locks within about half a minute,
 and after that starts from the saved alignment. Wear a tracker or hold a
 controller meanwhile: when two base stations could be either way round, the
 devices you wear or hold decide.

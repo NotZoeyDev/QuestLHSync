@@ -119,12 +119,10 @@ constexpr double kHeightBin = 0.05, kHeightTol = 0.2, kHeightKeep = 120.0;  // m
 constexpr double kBrkJumpGap = 0.2;  // s
 
 double RotorPeriod(int channel);  // s, a 2.0 base station on channel 1..16, else 0
-constexpr double kUpward = 0.1;        // a camera whose axis climbs this much (of 1) looks up: the Frame's upper pair
 
 // ---------------------------------------------------------------- optics
 struct CamCal {
   bool valid = false;
-  bool use = true;  // the cameras that look where base stations hang (the Frame's two upper ones); all on a Quest
   int w = 0, h = 0;
   double ir = 1.0;  // near-IR laser image scale about the centre: kIR for the Quest side cameras
   M3 R;  // device <- camera
@@ -142,8 +140,6 @@ class Optics {
   bool Ray(int cam, double x, double y, V3 &o, V3 &d) const;  // device frame
   bool Pose(int cam, M3 &R, V3 &t) const;                     // device <- camera
   bool InImage(int cam, V3 dc, double margin) const;          // a camera-frame direction lands on the image
-  bool Used(int cam) const { return cam >= 0 && cam < kMaxCam && cams_[cam].valid && cams_[cam].use; }  // sightings count
-  std::string Unused() const;  // "0, 1": the calibrated cameras left out, "" for none
   const std::string &device() const { return device_; }       // "Seacliff" (Quest Pro), "Eureka" (Quest 3), ...
   enum Headset { kQuest, kFrame, kGalaxyXR };
   Headset headset() const { return headset_; }     // whose calibration it is
