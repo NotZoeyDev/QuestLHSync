@@ -847,6 +847,8 @@ void Solver::Clear() {
   acq_forced_ = acq_dim_ = false;
   starved_ = false;
   dot_ = dot_said_ = 0;
+  area_ = kMaxSource;
+  last_locked_ = area_moved_ = -1e18;
   amb_state_ = 0;
   kept_said_ = -1e18;
   held_h_.clear();  // another headset, or a reference frame pinned anew: the height held means nothing now
@@ -963,12 +965,13 @@ bool Solver::Triangulate(std::map<std::string, Seen> &out) {
   Predict(x_, S, Z, P, Zq);
   bool dim = starved_;
   std::vector<std::vector<size_t>> pick(S.size());
+  const DotLimit lim = dot_limit();
   for (size_t n = 0; n < r.size(); n++) {
     if (!r.B[n] && !dim) continue;
     int k;
     double a;
     Nearest(P, Zq, r.O[n], r.D[n], k, a);
-    if (a < GATE && FromStation(r.A[n], P[k], r.O[n], dot_)) pick[k].push_back(n);
+    if (a < GATE && FromStation(r.A[n], P[k], r.O[n], lim)) pick[k].push_back(n);
   }
   for (size_t k = 0; k < S.size(); k++) {
     if (pick[k].size() < 20) continue;
@@ -1059,10 +1062,11 @@ void Solver::Support(const X4 &x, const std::vector<V3> &S, const std::vector<V3
   std::vector<V3> P, Zq;
   Predict(x, S, Z, P, Zq);
   cnt.assign(S.size(), 0);
+  const DotLimit lim = dot_limit();
   for (size_t n = 0; n < r.size(); n++) {
     int k; double a;
     Nearest(P, Zq, r.O[n], r.D[n], k, a);
-    if (a < gate && (r.A.empty() || FromStation(r.A[n], P[k], r.O[n], dot_))) cnt[k]++;
+    if (a < gate && (r.A.empty() || FromStation(r.A[n], P[k], r.O[n], lim))) cnt[k]++;
   }
 }
 
@@ -1168,6 +1172,7 @@ Solver::FitR Solver::Fit(const X4 &x0, const std::vector<V3> &S, const std::vect
   std::vector<char> use(r.size(), 0);
   std::vector<int> kk(r.size(), 0);
   int m = 0;
+  const DotLimit lim = dot_limit();
   for (size_t n = 0; n < r.size(); n++) {
     double a;
     if (who) {
@@ -1178,7 +1183,7 @@ Solver::FitR Solver::Fit(const X4 &x0, const std::vector<V3> &S, const std::vect
     }
     Nearest(P, Zq, r.O[n], r.D[n], kk[n], a);
     if (a < (r.B.empty() || r.B[n] ? gate : std::min(gate, dim_gate)) &&
-        (r.A.empty() || FromStation(r.A[n], P[kk[n]], r.O[n], dot_))) { use[n] = 1; m++; }
+        (r.A.empty() || FromStation(r.A[n], P[kk[n]], r.O[n], lim))) { use[n] = 1; m++; }
   }
   out.n = m;
   if (m < 15) return out;
@@ -1360,6 +1365,7 @@ void Solver::BatchSupport(const std::vector<X4> &H, const std::vector<V3> &S, co
   std::vector<V3> P(K), Zq(K);
   std::vector<double> cs(K);
   std::vector<char> fr(K);
+  const DotLimit lim = dot_limit();
   for (size_t h = 0; h < H.size(); h++) {
     double c = std::cos(H[h][0]), s = std::sin(H[h][0]);
     V3 t{H[h][1], H[h][2], H[h][3]};
@@ -1376,7 +1382,7 @@ void Solver::BatchSupport(const std::vector<X4> &H, const std::vector<V3> &S, co
         double v = fr[k] ? cs[k] : -2;
         if (v > bv) { bv = v; best = (int)k; }
       }
-      if (cs[best] > cg && fr[best] && (r.A.empty() || FromStation(r.A[n], P[best], r.O[n], dot_))) o[best]++;
+      if (cs[best] > cg && fr[best] && (r.A.empty() || FromStation(r.A[n], P[best], r.O[n], lim))) o[best]++;
     }
   }
 }
@@ -1503,11 +1509,12 @@ bool Solver::OnLamp(const X4 &x, const Rays &r, std::string &which) const {
   Stations(keys, S, Z);
   Predict(x, S, Z, P, Zq);
   std::vector<int> fit(S.size(), 0), big(S.size(), 0);
+  const DotLimit lim = dot_limit();
   for (size_t n = 0; n < r.size(); n++) {
     int k;
     double a;
     Nearest(P, Zq, r.O[n], r.D[n], k, a);
-    if (a < INLIER) (FromStation(r.A[n], P[k], r.O[n], dot_) ? fit : big)[k]++;
+    if (a < INLIER) (FromStation(r.A[n], P[k], r.O[n], lim) ? fit : big)[k]++;
   }
   for (size_t k = 0; k < S.size(); k++)
     if (big[k] > 2 * fit[k] + 5) { which = keys[k]; return true; }
@@ -2164,8 +2171,9 @@ StepStat Solver::Step(double /*now*/) {
   double now = seen_ = newest;
   starved_ = Starved(GetRays(std::max(now - ACQ_WIN, since_)));
   StepStat st;
-  std::vector<double> sz;  // sr * m
-  int big = 0;
+  std::vector<double> sz, area;  // sr * m, and sr * m^2: the bright sightings within INLIER the light size limit takes
+  int big = 0;                   // ... and those over it
+  const DotLimit lim = dot_limit();
   if (!S.empty() && has_x_) {
     Rays r = GetRays(std::max(now - WIN, since_));
     if (r.size()) {
@@ -2204,8 +2212,12 @@ StepStat Solver::Step(double /*now*/) {
           l = std::max(l, r.T[n]);
           if (r.B[n] && !r.A.empty()) {
             double d = norm(P[kk] - r.O[n]);
-            if (r.A[n] * d * d <= kMaxSource) sz.push_back(r.A[n] * d);
-            else big++;
+            if (r.A[n] * d * d <= lim.area) {
+              sz.push_back(r.A[n] * d);
+              area.push_back(r.A[n] * d * d);
+            } else {
+              big++;
+            }
           }
         }
       }
@@ -2240,9 +2252,34 @@ StepStat Solver::Step(double /*now*/) {
     if (!(std::fabs(v / dot_said_ - 1) < 0.25)) {
       dot_said_ = v;
       log_(Fmt("base stations' dots: %.2e sr m (90%% of %d sightings); blobs over twice that, and %.0f cm^2, are lamps",
-               v, (int)sz.size(), kMaxSource * 1e4));
+               v, (int)sz.size(), lim.area * 1e4));
     }
     dot_ = v;
+  }
+  // the light size limit (FromStation): no lock for kWidenAfter s, it widens a step every kWidenEvery s up to
+  // kMaxSourceTop; locked, it narrows a step at a time toward 1.5x what the dots it takes need (90%), never under
+  // kMaxSource
+  if (locked || last_locked_ < -1e17) last_locked_ = now;
+  if (!S.empty() && now - area_moved_ >= kWidenEvery) {
+    double was = lim.area, to = was;
+    if (!locked && now - last_locked_ >= kWidenAfter) {
+      to = std::min(kMaxSourceTop, was * kWiden);
+      if (to > was)
+        log_(Fmt("no lock for %.0f s: lights up to %.0f cm^2 count as base stations' dots now (%.0f to %.0f)",
+                 now - last_locked_, to * 1e4, kMaxSource * 1e4, kMaxSourceTop * 1e4));
+    } else if (locked && area.size() >= 100) {
+      std::nth_element(area.begin(), area.begin() + area.size() * 9 / 10, area.end());
+      double p90 = area[area.size() * 9 / 10], need = std::max(kMaxSource, 1.5 * p90);
+      if (need < 0.9 * was) {
+        to = std::max(need, was / kWiden);
+        log_(Fmt("locked: lights up to %.0f cm^2 count as base stations' dots (90%% of %d sightings: %.0f cm^2 or less)",
+                 to * 1e4, (int)area.size(), p90 * 1e4));
+      }
+    }
+    if (to != was) {
+      area_ = to;
+      area_moved_ = now;
+    }
   }
   if (now - last_acq_ > (locked ? 10 : 3)) {
     last_acq_ = now;
@@ -2442,7 +2479,7 @@ void Timing::Record(double tg, V3 od, V3 dd, double hg, int cam, bool bright, do
 // pulled estimates toward it (3 ms instead of ~18 right after a seed). IRLS Gauss-Newton, Cauchy 0.3 deg, a weak pull
 // toward the start for directions the sightings don't pin. False unless both stations have slow sightings.
 static bool RefitSlow(X4 &x, const std::vector<V3> &S, const std::vector<V3> &Z, const std::vector<V3> &O,
-                      const std::vector<V3> &D, const std::vector<float> &A, double lim) {
+                      const std::vector<V3> &D, const std::vector<float> &A, const DotLimit &lim) {
   if (S.size() < 2 || O.size() < 30) return false;
   const X4 x0 = x;
   std::vector<V3> P, Zq;
@@ -2531,14 +2568,14 @@ static bool RefitSlow(X4 &x, const std::vector<V3> &S, const std::vector<V3> &Z,
 // later estimate searches near the current timing, and the whole range when its minimum lies at that search's edge:
 // a timing saved far off (a Frame's at -6.2 ms) could otherwise never move
 bool Timing::Estimate(const PoseHist &poses, const X4 &x, const std::vector<V3> &S, const std::vector<V3> &Z, double cur,
-                      bool wide, double &best, int &n, Split &sp, double lim) {
+                      bool wide, double &best, int &n, Split &sp, const DotLimit &lim) {
   bool edge = false;
   if (Search(poses, x, S, Z, cur, wide, best, n, sp, edge, lim)) return true;
   return !wide && edge && Search(poses, x, S, Z, cur, true, best, n, sp, edge, lim);
 }
 
 bool Timing::Search(const PoseHist &poses, const X4 &x, const std::vector<V3> &S, const std::vector<V3> &Z, double cur,
-                    bool wide, double &best, int &n, Split &sp, bool &edge, double lim) {
+                    bool wide, double &best, int &n, Split &sp, bool &edge, const DotLimit &lim) {
   const double nan = std::numeric_limits<double>::quiet_NaN();
   sp = {nan, nan, 0, 0, nan};
   edge = false;
@@ -3624,7 +3661,7 @@ Transform Sync::Tick(double now) {
       double cur = expo_;
       {
         std::lock_guard<std::mutex> g(net_);
-        ok = timing_.Estimate(poses_, x, S, Z, cur, !timing_learned_, best, n, sp, solver_.dot_size());
+        ok = timing_.Estimate(poses_, x, S, Z, cur, !timing_learned_, best, n, sp, solver_.dot_limit());
       }
       if (!ok && std::isfinite(sp.left) && now - split_said_ >= 300) {
         split_said_ = now;
