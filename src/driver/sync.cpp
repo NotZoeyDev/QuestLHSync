@@ -792,6 +792,10 @@ void Frame::Update(const std::map<std::string, std::pair<V3, M3>> &raw) {
     auto it = raw.find(f_.anchor);
     if (it == raw.end()) return;
     Cs = f_.anchor_R * T(it->second.second);
+    if (levelled_) {  // its heading only: the driver's level stays
+      const auto &m = Cs.m;
+      Cs = Ry(std::atan2(m[0][2] - m[2][0], m[0][0] + m[2][2]));
+    }
     o = it->second.first;
   }
   double ang = RotDeg(Cs);

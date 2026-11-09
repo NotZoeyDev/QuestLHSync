@@ -3,7 +3,8 @@
 // view is off by centimetres and up to a degree or more, so SteamVR moves the station whenever a device finds its
 // tracking again (vrserver.txt: "Moving base ... because of relationship with ..."), and everything it tracks through
 // that station moves with it. This hooks that step in SteamVR's lighthouse driver and hands it the average of the
-// pair's relationships instead (kept across sessions in relations.json).
+// pair's relationships instead (kept across sessions in relations.json). openhouse, a driver_lighthouse.dll of its own,
+// has no such step: its room map holds a base station still once it's placed well, so it's left as it is.
 #pragma once
 #include <atomic>
 #include <cstdint>
@@ -21,7 +22,7 @@ class Relations {
   Relations(std::string dir, LogFn log);
   void SetEnabled(bool on) { enabled_ = on; }
   // hooks driver_lighthouse.dll's relationship step (MinHook initialised). True once there's nothing more to try
-  // (hooked, or code this doesn't know), false while that DLL isn't loaded yet
+  // (hooked, openhouse, or code this doesn't know), false while that DLL isn't loaded yet
   bool Hook();
   void Unhook();
   // SteamVR's relationship of stations a and b (qx qy qz qw tx ty tz; a = rel * b) -> out, the one it gets instead;
@@ -36,6 +37,8 @@ class Relations {
   static Pose Mean(const std::vector<Pose> &v);
   // the relationship step in a loaded driver_lighthouse.dll, or null and why
   static void *Find(void *module, std::string &why);
+  // a loaded driver_lighthouse.dll is openhouse's
+  static bool IsOpenhouse(void *module);
 
  private:
   std::string dir_;

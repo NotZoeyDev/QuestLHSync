@@ -125,9 +125,11 @@ Optional, in `steamvr.vrsettings` under `"driver_questlhsync"`:
 | `anyHmd` | `false` | Use SteamVR's headset even when it isn't named a Quest Pro, 3, 3S or Steam Frame |
 | `record` | `false` | Record every session (same as the button) |
 | `gravity` | `true` | `false` turns levelling by the lighthouse devices' accelerometers off |
-| `steadyStations` | `true` | `false` lets SteamVR move base stations by each new measurement instead of their average |
+| `steadyStations` | `true` | `false` lets SteamVR move base stations by each new measurement instead of their average (SteamVR's own lighthouse driver only) |
 
 With a wired headset (SteamVR's headset is a lighthouse one, or tracked by a driver that isn't a streamer's: Index, Vive, Windows Mixed Reality, ...), QuestLHSync switches itself off: no corrections, no levelling, no base station averaging, and the dashboard closes. `anyHmd` keeps it on for a headset it wouldn't otherwise accept (never a lighthouse one).
+
+[openhouse](https://github.com/YusufOzmen01/openhouse) in place of SteamVR's lighthouse driver works too: its trackers, controllers and base stations are moved like SteamVR's own, a base station shows up once openhouse has locked its place, and openhouse keeps the stations still itself, so `steadyStations` has nothing to do. openhouse levels its room itself, and keeps refining that level: with one or two base stations, QuestLHSync's reference frame follows the anchor's heading and place but takes openhouse's level as it is. openhouse doesn't name each device's receiver to SteamVR, so the levelling by the controllers' and trackers' accelerometers stays off. With three or more, the cameras level the reference frame as with SteamVR's driver.
 
 ## Troubleshooting
 

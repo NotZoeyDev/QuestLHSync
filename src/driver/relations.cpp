@@ -69,6 +69,20 @@ bool Far(const Relations::Pose &a, const Relations::Pose &b, double m, double de
 
 std::string Name(uint32_t s) { return Fmt("LHB-%08X", s); }
 
+// the first n bytes of s in the image's data (sections that don't execute), or null
+const uint8_t *FindData(void *module, const char *s, size_t n) {
+  auto *base = (uint8_t *)module;
+  auto *nt = (IMAGE_NT_HEADERS64 *)(base + ((IMAGE_DOS_HEADER *)base)->e_lfanew);
+  auto *sec = IMAGE_FIRST_SECTION(nt);
+  for (int i = 0; i < nt->FileHeader.NumberOfSections; i++) {
+    if (sec[i].Characteristics & IMAGE_SCN_MEM_EXECUTE) continue;
+    const uint8_t *p = base + sec[i].VirtualAddress, *e = p + sec[i].Misc.VirtualSize;
+    for (; p + n <= e; p++)
+      if (*p == (uint8_t)s[0] && !memcmp(p, s, n)) return p;
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 Relations::Relations(std::string dir, LogFn log) : dir_(std::move(dir)), log_(std::move(log)) { Load(); }
@@ -90,6 +104,11 @@ Relations::Pose Relations::Mean(const std::vector<Pose> &v) {
   return {{s.w / n, s.x / n, s.y / n, s.z / n}, t * (1.0 / v.size())};
 }
 
+bool Relations::IsOpenhouse(void *module) {
+  static const char kSection[] = "driver_openhouse";  // its settings section in steamvr.vrsettings
+  return FindData(module, kSection, sizeof kSection) != nullptr;
+}
+
 void *Relations::Find(void *module, std::string &why) {
   auto *base = (uint8_t *)module;
   auto *dos = (IMAGE_DOS_HEADER *)base;
@@ -97,13 +116,7 @@ void *Relations::Find(void *module, std::string &why) {
   auto *sec = IMAGE_FIRST_SECTION(nt);
   int nsec = nt->FileHeader.NumberOfSections;
   // the log line, then the code that loads it
-  const uint8_t *str = nullptr;
-  for (int i = 0; i < nsec && !str; i++) {
-    if (sec[i].Characteristics & IMAGE_SCN_MEM_EXECUTE) continue;
-    const uint8_t *p = base + sec[i].VirtualAddress, *e = p + sec[i].Misc.VirtualSize;
-    for (; p + sizeof kMoving <= e; p++)
-      if (*p == 'M' && !memcmp(p, kMoving, sizeof kMoving - 1)) { str = p; break; }
-  }
+  const uint8_t *str = FindData(module, kMoving, sizeof kMoving - 1);
   if (!str) { why = "no base station move in it"; return nullptr; }
   const uint8_t *ref = nullptr;
   for (int i = 0; i < nsec && !ref; i++) {
@@ -146,6 +159,11 @@ bool Relations::Hook() {
   if (target_) return true;
   HMODULE mod = GetModuleHandleW(L"driver_lighthouse.dll");
   if (!mod) return false;
+  if (IsOpenhouse(mod)) {
+    log_("base stations: openhouse places them from its own room map, each one still once it's locked: nothing to "
+         "average");
+    return true;
+  }
   std::string why;
   void *fn = Find(mod, why);
   if (!fn) {

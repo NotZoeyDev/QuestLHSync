@@ -441,13 +441,16 @@ class Provider : public vr::IServerTrackedDeviceProvider {
             sys.c_str()));
   }
 
-  // a 2.0 base station's mode label is its channel, "1".."16"
+  // a 2.0 base station's mode label is its channel, "1".."16". A 1.0 one's ("HTC V2-XD/XE") is A, b or c, or with
+  // openhouse's lhbs firmware its multi-station slot "1".."4", which sets no rotor period
   void ReadChannel(uint32_t i) {
     auto c = vr::VRProperties()->TrackedDeviceToPropertyContainer(i);
     if (c == vr::k_ulInvalidPropertyContainer) return;
     std::string label = GetStr(c, vr::Prop_ModeLabel_String);
+    bool lh1 = GetStr(c, vr::Prop_ModelNumber_String).rfind("HTC", 0) == 0;
     int ch = 0;
-    if (!label.empty() && std::all_of(label.begin(), label.end(), [](char x) { return isdigit((unsigned char)x); }))
+    if (!lh1 && !label.empty() &&
+        std::all_of(label.begin(), label.end(), [](char x) { return isdigit((unsigned char)x); }))
       ch = atoi(label.c_str());
     if (ch < 1 || ch > 16) ch = 0;
     if (ch != g_dev[i].channel.exchange(ch) && !label.empty())
@@ -482,6 +485,7 @@ class Provider : public vr::IServerTrackedDeviceProvider {
   std::atomic<bool> wired_{false};  // SteamVR's headset is wired (not streamed): everything here stays off
   bool any_hmd_ = false, recording_ = false, overlay_started_ = false, steady_ = true, rel_done_ = true;
   bool stood_down_ = false;  // the worker's, once wired: hooks out, search and levelling stopped
+  bool lh_known_ = false;    // the worker's: which driver_lighthouse.dll is loaded is known
   int cmd_seen_ = 0;
   double started_ = 0, last_status_ = 0;
   Sync::Spots rec_spots_;  // when the recording started
@@ -714,6 +718,15 @@ class Provider : public vr::IServerTrackedDeviceProvider {
         if (g_gravity->Step(ref, on, tilt)) g_sync->SetGravity(on, tilt);
       }
       if (!rel_done_ && now - started_ < 60) rel_done_ = g_rel->Hook();
+      if (!lh_known_ && now - started_ < 60) {  // openhouse levels its own frame: the reference frame keeps its level
+        if (HMODULE m = GetModuleHandleW(L"driver_lighthouse.dll")) {
+          lh_known_ = true;
+          if (Relations::IsOpenhouse(m)) {
+            g_sync->SetLevelled(true);
+            Log("lighthouse frame: openhouse levels it, the reference frame keeps its level");
+          }
+        }
+      }
       g_rel->Flush();
       if (now - last_status_ >= 0.25) { last_status_ = now; Publish(now); }
       if (!overlay_started_ && !wired_ && now - started_ > 2 && !vr::VRServerDriverHost()->IsExiting()) {

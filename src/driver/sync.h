@@ -273,6 +273,9 @@ class Frame {
   void Rotation(M3 &C, V3 &t) const { C = C_; t = oref_ - C_ * o_; }  // p_ref = C p_raw + t
   // levelled by gravity (gravity.h): tilt after the level; from the next Update
   void SetGravity(bool on, const M3 &tilt) { grav_ = on; G_ = tilt; }
+  // the lighthouse frame is levelled by its driver (openhouse): one or two stations pin its heading and place, not
+  // its tilt, so the driver's level and its refinements pass through; from the next Update
+  void SetLevelled(bool on) { levelled_ = on; }
   const M3 &gravity() const { return GC_; }  // the tilt in C_ (none: identity)
   M3 Anchored() const { return f_.level * Cs_; }  // SteamVR's frame -> the reference frame, before gravity's tilt
   int ok() const { return ok_; }
@@ -284,7 +287,7 @@ class Frame {
   LogFn log_;
   M3 C_, Cs_;  // SteamVR's frame -> the reference frame, with (and gravity's tilt) and without the level
   M3 G_, GC_;
-  bool grav_ = false;
+  bool grav_ = false, levelled_ = false;
   V3 o_, oref_;
   int ok_ = -1;
   double deg_ = 0;
@@ -517,6 +520,7 @@ class Sync {
   // (rotation), the frame's turn on top of that now, and which reference frame (key). False when the cameras level it
   bool GravityFrame(M3 &C, M3 &turn, std::string &key);
   void SetGravity(bool on, const M3 &tilt) { frame_.SetGravity(on, tilt); }  // the driver's worker thread, as Tick
+  void SetLevelled(bool on) { frame_.SetLevelled(on); }  // Frame::SetLevelled; the driver's worker thread, as Tick
   void SetPaused(bool p) { paused_ = p; }
   // forgets everything learned about the alignment and starts over: the sightings, the fit, the saved alignment and
   // pose timing of this headset, and an automatic reference frame. Call from Tick's thread
