@@ -849,6 +849,7 @@ void Solver::Clear() {
   dot_ = dot_said_ = 0;
   area_ = kMaxSource;
   last_locked_ = area_moved_ = -1e18;
+  all_found_ = false;
   amb_state_ = 0;
   kept_said_ = -1e18;
   held_h_.clear();  // another headset, or a reference frame pinned anew: the height held means nothing now
@@ -2257,12 +2258,22 @@ StepStat Solver::Step(double /*now*/) {
     dot_ = v;
   }
   // the light size limit (FromStation): no lock for kWidenAfter s, it widens a step every kWidenEvery s up to
-  // kMaxSourceTop; locked, it narrows a step at a time toward 1.5x what the dots it takes need (90%), never under
-  // kMaxSource
+  // kMaxSourceTop, until the alignment has seen every station; locked, it narrows a step at a time toward 1.5x what the
+  // dots it takes need (90%), never under kMaxSource
+  if (has_x_ && st.has_per && !all_found_ && st.per.size() == S.size()) {
+    bool all = true;
+    for (auto &kv : st.per) all = all && kv.second >= kFoundN;
+    if (all) {
+      all_found_ = true;
+      if (lim.area > kMaxSource)
+        log_(Fmt("all %d base stations found: lights up to %.0f cm^2 count as their dots, it widens no more",
+                 (int)S.size(), lim.area * 1e4));
+    }
+  }
   if (locked || last_locked_ < -1e17) last_locked_ = now;
   if (!S.empty() && now - area_moved_ >= kWidenEvery) {
     double was = lim.area, to = was;
-    if (!locked && now - last_locked_ >= kWidenAfter) {
+    if (!locked && !all_found_ && now - last_locked_ >= kWidenAfter) {
       to = std::min(kMaxSourceTop, was * kWiden);
       if (to > was)
         log_(Fmt("no lock for %.0f s: lights up to %.0f cm^2 count as base stations' dots now (%.0f to %.0f)",

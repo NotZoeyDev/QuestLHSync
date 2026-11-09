@@ -55,10 +55,12 @@ constexpr int kMaxPx = 400;             // bigger blobs are lamps/windows, not a
 // A base station's dot or a lamp, by the size of the light: sr * d^2 (m^2) at the station's distance d. The limit
 // starts at kMaxSource, its floor, never gone under. While the base stations go unseen with it (no lock for
 // kWidenAfter s) it widens by kWiden every kWidenEvery s up to kMaxSourceTop: a dot blooming past the floor (close up,
-// a camera that sees it larger) gets its chance. Locked, it narrows back toward 1.5x what the dots it takes need
+// a camera that sees it larger) gets its chance. Once the alignment has seen every station (kFoundN sightings each) it
+// widens no more. Locked, it narrows back toward 1.5x what the dots it takes need
 constexpr double kMaxSource = 0.008;     // m^2, the floor
 constexpr double kMaxSourceTop = 0.024;  // m^2, the ceiling
 constexpr double kWidenAfter = 30.0, kWidenEvery = 10.0, kWiden = 1.25;  // s, s, factor per step
+constexpr int kFoundN = 10;  // sightings within INLIER of the alignment: the station is found
 struct DotLimit {
   double area = kMaxSource;  // m^2: a light up to this size is a dot
   double size = 0;           // sr * m: the dots' size learned (0: none yet), up to twice that is a dot too
@@ -412,6 +414,7 @@ class Solver {
   double dot_said_ = 0;
   std::atomic<double> area_{kMaxSource};  // DotLimit::area
   double last_locked_ = -1e18, area_moved_ = -1e18;  // the step's time last locked (or of its first sighting), area_ set
+  bool all_found_ = false;  // the alignment has seen every station (kFoundN): the limit widens no more
   bool Starved(const Rays &r) const;
   bool OnLamp(const X4 &x, const Rays &r, std::string &which) const;
   // the Steam Frame: its cameras seldom see a base station's dot saturate (a recording: 95% of the sightings of the
