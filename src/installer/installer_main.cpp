@@ -1056,6 +1056,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int show) {
   wc.lpfnWndProc = WndProc;
   wc.hInstance = hi;
   wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+  wc.hIcon = LoadIconW(hi, MAKEINTRESOURCEW(1));  // installer.rc
   wc.hbrBackground = CreateSolidBrush(C(col::bg));
   wc.lpszClassName = L"QuestLHSyncInstaller";
   RegisterClassW(&wc);

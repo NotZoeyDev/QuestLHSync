@@ -1,0 +1,36 @@
+// Icon, version info and manifest for QuestLHSync-Installer.exe. build.bat passes QLHS_VER_MAJOR/QLHS_VER_MINOR, split
+// from QLHS_RELEASE; RC reads only the #defines out of the .h.
+#include <winres.h>
+#include "../common/qlhs_status.h"
+
+1 ICON "installer.ico"
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "installer.manifest"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION QLHS_VER_MAJOR, QLHS_VER_MINOR, 0, 0
+ PRODUCTVERSION QLHS_VER_MAJOR, QLHS_VER_MINOR, 0, 0
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+ FILEFLAGS 0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "CompanyName", "CreoleVR"
+      VALUE "FileDescription", "QuestLHSync Installer"
+      VALUE "FileVersion", QLHS_RELEASE
+      VALUE "InternalName", "QuestLHSync-Installer"
+      VALUE "LegalCopyright", "Copyright (c) 2026 CreoleVR. MIT License"
+      VALUE "OriginalFilename", "QuestLHSync-Installer.exe"
+      VALUE "ProductName", "QuestLHSync"
+      VALUE "ProductVersion", QLHS_RELEASE
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

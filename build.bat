@@ -34,7 +34,12 @@ if /i "%1"=="overlay" exit /b 0
 :installer
 if not exist build\installer mkdir build\installer
 if not exist out mkdir out
+for /f tokens^=2^ delims^=^" %%v in ('findstr /c:"#define QLHS_RELEASE" src\common\qlhs_status.h') do set REL=%%v
+for /f "tokens=1,2 delims=." %%a in ("%REL%") do (set REL_MAJOR=%%a& set REL_MINOR=%%b)
+if not defined REL_MINOR set REL_MINOR=0
+rc /nologo /dQLHS_VER_MAJOR=%REL_MAJOR% /dQLHS_VER_MINOR=%REL_MINOR% /fo build\installer\installer.res ^
+  src\installer\installer.rc || exit /b 1
 cl /nologo /utf-8 /O2 /EHsc /std:c++17 /MT /W3 /DNOMINMAX /DWIN32_LEAN_AND_MEAN /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS ^
-  /Fobuild\installer\ src\installer\installer_main.cpp ^
+  /Fobuild\installer\ src\installer\installer_main.cpp build\installer\installer.res ^
   /Fe:out\QuestLHSync-Installer.exe /link /NOLOGO /SUBSYSTEM:WINDOWS winhttp.lib gdi32.lib user32.lib dwmapi.lib || exit /b 1
 echo built out\QuestLHSync-Installer.exe
