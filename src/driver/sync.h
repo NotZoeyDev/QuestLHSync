@@ -52,20 +52,11 @@ constexpr double kTimingTurn = 10.0, kTimingSplit = 0.030;  // deg/s, s
 constexpr int kTimingBoot = 200;
 constexpr double kTimingCI = 0.006;  // s
 constexpr int kMaxPx = 400;             // bigger blobs are lamps/windows, not a laser dot
-// A base station's dot or a lamp, by the size of the light: sr * d^2 (m^2) at the station's distance d. The limit
-// starts at kMaxSource, its floor, never gone under. While the base stations go unseen with it (no lock for
-// kWidenAfter s) it widens by kWiden every kWidenEvery s up to kMaxSourceTop: a dot blooming past the floor (close up,
-// a camera that sees it larger) gets its chance. Locked, it narrows back toward 1.5x what the dots it takes need
-constexpr double kMaxSource = 0.008;     // m^2, the floor
-constexpr double kMaxSourceTop = 0.024;  // m^2, the ceiling
-constexpr double kWidenAfter = 30.0, kWidenEvery = 10.0, kWiden = 1.25;  // s, s, factor per step
-struct DotLimit {
-  double area = kMaxSource;  // m^2: a light up to this size is a dot
-  double size = 0;           // sr * m: the dots' size learned (0: none yet), up to twice that is a dot too
-};
-inline bool FromStation(double sr, V3 p, V3 o, const DotLimit &lim) {
+constexpr double kMaxSource = 0.008;    // m^2
+// lim: the dots' size learned, sr * m (0: none yet)
+inline bool FromStation(double sr, V3 p, V3 o, double lim) {
   double d2 = dot(p - o, p - o);
-  return sr * d2 <= lim.area || (lim.size > 0 && sr * std::sqrt(d2) <= 2 * lim.size);
+  return sr * d2 <= kMaxSource || (lim > 0 && sr * std::sqrt(d2) <= 2 * lim);
 }
 // blobs this bright: a base station's dot, or a lamp. Dimmer ones (module 1.6 on) are mostly other lights, a few
 // percent station dots: they count only in a room too light for the dots to saturate (Solver::starved), and then in
@@ -347,7 +338,7 @@ class Solver {
   bool has_x() const { return has_x_; }
   void SetDimDots(bool on) { dim_dots_ = on; }  // see dim_dots_
   bool starved() const { return starved_; }
-  DotLimit dot_limit() const { return {area_, dot_}; }  // see FromStation
+  double dot_size() const { return dot_; }  // sr * m (see FromStation)
   int resets() const { return resets_; }
   X4 x() const { return x_; }
   // stations (sorted by serial) as the solver uses them
@@ -413,8 +404,6 @@ class Solver {
   std::atomic<bool> starved_{false};  // the recent rays are under 5% bright, of 200 or more (see Bright)
   std::atomic<double> dot_{0};
   double dot_said_ = 0;
-  std::atomic<double> area_{kMaxSource};  // DotLimit::area
-  double last_locked_ = -1e18, area_moved_ = -1e18;  // the step's time last locked (or of its first sighting), area_ set
   bool Starved(const Rays &r) const;
   bool OnLamp(const X4 &x, const Rays &r, std::string &which) const;
   // the Steam Frame: its cameras seldom see a base station's dot saturate (a recording: 95% of the sightings of the
@@ -467,13 +456,12 @@ class Timing {
   struct Split { double left, right; int nl = 0, nr = 0; double ci; };
   // grid search of the offset on fast-head sightings against the current alignment: true if it found one
   bool Estimate(const PoseHist &poses, const X4 &x, const std::vector<V3> &S, const std::vector<V3> &Z, double cur,
-                bool wide, double &best, int &n, Split &sp, const DotLimit &lim);
+                bool wide, double &best, int &n, Split &sp, double lim);  // lim: Solver::dot_size
 
  private:
   std::deque<Rec> rec_;
-  // edge: a minimum at the search's edge
   bool Search(const PoseHist &poses, const X4 &x, const std::vector<V3> &S, const std::vector<V3> &Z, double cur,
-              bool wide, double &best, int &n, Split &sp, bool &edge, const DotLimit &lim);
+              bool wide, double &best, int &n, Split &sp, bool &edge, double lim);  // edge: a minimum at the search's edge
 };
 
 // ---------------------------------------------------------------- the app
